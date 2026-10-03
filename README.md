@@ -22,7 +22,11 @@ uv run pytest                           # 运行全部测试（含预算判定�
 | --- | --- | --- |
 | POST | `/admin/grant` | 授权主体并设置预算（`{"principal": "alice", "budget_epsilon": 10}`，缺省 10） |
 | GET | `/budget/{principal}` | 查询剩余/已耗预算与授权状态 |
-| POST | `/query` | 提交 DP 聚合查询 |
+| POST | `/query` | 提交 DP 聚合查询（可选 `pool_id` 从共享池扣费） |
+| POST | `/admin/pool` | 创建共享预算池或整体替换成员名单 |
+| GET | `/pool/{pool_id}` | 查看池成员与额度（总额/已耗/剩余） |
+| POST | `/admin/adjust` | 预算调整（追加/回收，按调整单号幂等） |
+| GET | `/history/{principal}?viewer=...` | 查看本人提交历史（筛选+分页，仅本人可见） |
 | GET | `/health` | 健康检查 |
 
 查询请求示例：
@@ -44,6 +48,8 @@ uv run pytest                           # 运行全部测试（含预算判定�
 - `value_column`：`sum`/`avg` 必填，取值 `age` 或 `salary`；`count` 省略。
 - `epsilon`：本次查询申请的隐私预算，`(0, 2.0]`。
 - `groups`：可选维度取值白名单；列表中不存在的取值作为“空分组”返回抑制原因。
+- `pool_id`：可选。缺省从个人额度扣费；给出时从该共享预算池扣费
+  （要求 `principal` 在池成员名单内）。
 
 ## 2. 隐私预算模型（epsilon-ledger）
 
@@ -61,18 +67,65 @@ uv run pytest                           # 运行全部测试（含预算判定�
 
   ```
   budget decision | query_id=b1 principal=bob replayed=false \
-    before=2.500000 required=1.000000 after=1.500000 basis=charged
+    before=2.500000 required=1.000000 after=1.500000 basis=charged source=personal
   budget decision | query_id=b3 principal=bob replayed=false \
-    before=0.500000 required=1.000000 after=0.500000 basis=insufficient_budget_denied
+    before=0.500000 required=1.000000 after=0.500000 basis=insufficient_budget_denied source=personal
   ```
 
-  `basis` 取值：`charged`（成功扣减）、`insufficient_budget_denied`（预算不足拒绝）、
+  `basis` 取值：`charged`（成功扣减）、`insufficient_budget_denied`（个人预算不足拒绝）、
+  `insufficient_pool_budget_denied`（池额度不足拒绝）、
   `idempotent_cache_hit`（幂等重放，不扣预算）。
+  `source` 取值：`personal` 或 `pool:<pool_id>`，标明扣费账户。
+
+## 2.1 共享预算池（team pool）
+
+团队可以把一部分额度集中成共享预算池，由成员共同消耗：
+
+- `POST /admin/pool` 创建池：`{"pool_id": "team-a", "members": ["alice", "bob"],
+  "budget_epsilon": 5.0}`。对已存在的池再次调用只**整体替换成员名单**，
+  请求里的 `budget_epsilon` 被忽略——池额度只能经 `/admin/adjust` 变更，
+  保证每次额度变动都有调整单号可查。
+- 查询时带 `pool_id` 即从池子扣费：要求 `principal` 在成员名单内，
+  否则 `403 pool_access_denied`；池不存在则 `404 unknown_pool`。
+  池成员不要求个人已授权（成员名单即访问控制）。
+- 池额度不足时返回 `429 pool_budget_exhausted`，与个人额度不足的
+  `429 budget_exhausted` 是**两个可区分的错误码**，日志 `basis` 同样区分。
+- 池是多人共享账户：所有扣减在同一事务锁内判定+扣减+落盘，
+  并发提交不会扣超（成功扣减总额 ≤ 池额度），也不会出现
+  “查询做完了没记账”或“记了账没结果”的半完成状态。
+- 响应里的 `budget_source`（`personal`/`pool`）与 `pool_id` 标明本次扣费来源；
+  `remaining_budget` 对池查询指**池的剩余额度**。
+
+## 2.2 预算调整（追加 / 回收）
+
+`POST /admin/adjust` 对个人额度或预算池做追加（`delta>0`）与回收（`delta<0`）：
+
+```json
+{"adjustment_id": "adj-2026-001", "target_type": "pool", "target": "team-a", "delta": 3.0}
+```
+
+- `adjustment_id` 是幂等键：同一单号相同参数重复提交（如网络重试）
+  **只生效一次**，返回与首次完全一致的结果（`replayed=true`）；
+  同一单号不同参数 → `409 adjustment_conflict`。
+- 回收安全性：若 `新额度 < 已消耗`，整笔调整拒绝
+  （`422 adjustment_rejected`，message 含已消耗与调整后数值），
+  **账本保持原样**——不会出现负余额或一半生效。
+  被拒绝的单号未占位，修正参数后可复用同一单号重新提交。
+- 调整目标必须存在：个人须已授权、池须已创建，否则 `422 adjustment_rejected`。
+- 每次调整（生效 / 幂等重放 / 拒绝）都写日志，含调整前后额度与已消耗：
+
+  ```
+  budget adjustment | adjustment_id=adj-1 target=pool:team-a delta=3.000000 \
+    before=5.000000 after=8.000000 spent=1.000000 basis=applied
+  ```
+
+- 调整记录与查询消耗一样持久化在 `ledger.json`，重启后重放仍命中幂等缓存。
 
 ### 跨重启持久化
 
-预算余额、授权状态与已完成查询记录全部持久化在 `data/ledger.json`，
-重启后从磁盘恢复：已耗预算不会回滚，已完成查询可直接重放。
+预算余额、授权状态、预算池、调整记录、已完成查询与提交历史全部持久化在
+`data/ledger.json`，重启后从磁盘恢复：已耗预算不会回滚，已完成查询可直接重放，
+已生效的调整单号重启后重试仍命中幂等缓存。
 
 ## 3. 加噪与抑制规则
 
@@ -100,27 +153,47 @@ uv run pytest                           # 运行全部测试（含预算判定�
 通过阈值的分组输出带噪值。响应里的 `suppressed` 列表与 `results` 互斥覆盖所有分组，
 空分组/小分组不会“静默消失”，也不会以零值伪装。
 
-## 4. 幂等与错误类型
+## 4. 幂等、多用户隔离与错误类型
 
-以 `query_id` 作为幂等键：
+以 `(principal, query_id)` 作为幂等键——**查询编号按用户隔离**：
 
-- 相同 `query_id` + 相同语义参数（聚合类型、维度、数值列、ε、groups）：
+- 不同用户可以使用同一个 `query_id`（如 `daily-count`、`q-001`）：
+  各自独立执行、各自扣费、各自缓存，**不会拿到别人的结果**，
+  参数冲突判定也互不影响。
+- 相同 `query_id` + 相同语义参数（聚合类型、维度、数值列、ε、groups、扣费来源）：
   返回首次结果的完整缓存，`replayed=true`，**不二次扣预算、结果不变**；
   仅传输层元数据 `replayed` 与首次不同，DP 载荷逐字段一致。
 - 相同 `query_id` + 不同参数 → `409 query_conflict`，防止复用 ID 顶替查询。
 - 预算耗尽后的重试：已完成查询仍可重放；新查询一律拒绝且不写半条记录。
+
+### 查询历史
+
+`GET /history/{principal}?viewer=<principal>` 查看提交历史：
+
+- **仅本人可见**：`viewer` 必须与路径中的 `principal` 一致，否则 `403 unauthorized`；
+- 支持筛选：`aggregation`、`dimension`、`status`（`completed`/`replayed`/`rejected`）、
+  `start`/`end`（epoch 秒时间范围）；支持 `page`/`page_size` 分页，
+  响应含 `total` 与当前页 `items`；
+- 成功、重放与被拒（含参数非法、未授权、预算不足）的提交都会入历史；
+- 历史条目只携带**加噪结果与抑制原因**，绝不包含原始精确值。
 
 可区分的错误码（`{"error": code, "message": ...}`）：
 
 | HTTP | error code | 含义 |
 | --- | --- | --- |
 | 422 | `invalid_query` | 参数非法：未知维度/列、sum/avg 缺 value_column、ε 超单次上限、请求体不合法 |
-| 403 | `unauthorized` | 主体未授权 |
-| 429 | `budget_exhausted` | 剩余 ε 不足（message 含剩余与所需数值） |
+| 403 | `unauthorized` | 主体未授权，或越权查看他人历史 |
+| 403 | `pool_access_denied` | 主体不在所请求预算池的成员名单内 |
+| 404 | `unknown_pool` | 引用了不存在的预算池 |
+| 429 | `budget_exhausted` | 个人剩余 ε 不足（message 含剩余与所需数值） |
+| 429 | `pool_budget_exhausted` | 池剩余 ε 不足（与个人不足可区分） |
 | 409 | `query_conflict` | query_id 已存在但参数不一致 |
+| 409 | `adjustment_conflict` | 调整单号已存在但参数不一致 |
+| 422 | `adjustment_rejected` | 调整被整体拒绝（回收将低于已消耗、目标不存在、delta 为 0） |
 | 500 | `internal_error` | 内部/持久化失败：仅返回脱敏信息与追踪 ref，堆栈只入服务日志 |
 
-参数校验失败、未授权、预算不足都发生在任何状态修改之前，不扣预算、不留记录。
+参数校验失败、未授权、预算不足都发生在任何状态修改之前，不扣预算、不留查询记录
+（仅留一条被拒绝的历史事件）。
 
 ## 5. 并发与失败语义
 
@@ -136,7 +209,19 @@ uv run pytest                           # 运行全部测试（含预算判定�
   - 不同 `query_id` 并发提交：成功数 × ε ≤ 预算总额，其余得到
     `budget_exhausted`，无超额扣减、无丢失、无重复计数。
 
-## 6. 验证方法
+## 6. 兼容范围
+
+- **老接口**：`/admin/grant`、`/budget/{principal}`、`/query`、`/health`
+  的请求/响应字段保持不变；`/query` 不带 `pool_id` 时行为与旧版完全一致
+  （从个人额度扣费），响应新增字段（`budget_source`、`pool_id`）为纯增量。
+- **老数据**：旧版 `ledger.json` 加载时自动就地迁移（幂等）：
+  - 扁平的 `queries` 记录按记录内的 `principal` 归位到按用户隔离的结构，
+    旧记录仍可正常重放、不会重复扣费；
+  - 旧版 5 分量 `cache_key` 自动补上 `pool_id=None` 分量；
+  - 补齐 `pools` / `adjustments` / `history` 三个新分区；
+  - 旧记录没有 `created_at`，在历史查询中仅当未指定时间范围时纳入。
+
+## 7. 验证方法
 
 ```bash
 uv run pytest -v
@@ -153,9 +238,41 @@ uv run pytest -v
 - `tests/test_privacy.py`：空/小分组抑制原因、阈值边界（2 抑制、3+ 放行）、
   噪声确定性与统计有效性、sum/avg 不泄漏精确值、sum 不无偿附带计数；
 - `tests/test_api.py`：HTTP 全链路、非法 JSON 脱敏为 `invalid_query`、
-  非领域异常脱敏为 `internal_error`。
+  非领域异常脱敏为 `internal_error`；
+- `tests/test_pools.py`：池成员控制、池/个人额度不足错误码可区分、
+  池重放不重复扣费、12 线程多成员并发共用一池不超支且账实相符、
+  不带 `pool_id` 的老用法不变；
+- `tests/test_adjustments.py`：追加/回收、同一调整单号重复提交只生效一次且
+  结果一致、回收导致负余额时整笔回滚且单号可复用、池额度调整、
+  调整记录跨重启保留；
+- `tests/test_multiuser.py`：不同用户同名 `query_id` 互不串结果与扣费、
+  旧版扁平账本自动迁移后旧记录可重放、新查询按用户隔离；
+- `tests/test_history.py`：按聚合/维度/状态/时间范围筛选、分页、
+  越权查看他人历史被拒、历史条目不携带精确值、被拒查询也入历史。
 
-## 7. 内置数据集
+### 手动验证新能力
+
+```bash
+uv run uvicorn main:app --reload   # 另开终端执行下列命令
+
+# 1) 建池（alice/bob 共用 5.0），成员走池子查询
+curl -X POST localhost:8000/admin/pool -H 'content-type: application/json' \
+  -d '{"pool_id":"team-a","members":["alice","bob"],"budget_epsilon":5.0}'
+curl -X POST localhost:8000/query -H 'content-type: application/json' \
+  -d '{"query_id":"q-001","principal":"alice","aggregation":"count","dimension":"city","epsilon":1.0,"pool_id":"team-a"}'
+curl localhost:8000/pool/team-a
+
+# 2) 预算调整：追加 3.0；同一单号重试返回相同结果且不重复生效
+curl -X POST localhost:8000/admin/adjust -H 'content-type: application/json' \
+  -d '{"adjustment_id":"adj-001","target_type":"pool","target":"team-a","delta":3.0}'
+
+# 3) 另一用户用同一编号查询（互不影响），再查看各自历史
+curl -X POST localhost:8000/query -H 'content-type: application/json' \
+  -d '{"query_id":"q-001","principal":"bob","aggregation":"count","dimension":"city","epsilon":1.0,"pool_id":"team-a"}'
+curl 'localhost:8000/history/alice?viewer=alice&status=completed&page=1&page_size=10'
+```
+
+## 8. 内置数据集
 
 首次启动确定性生成 12 行员工记录（`data/dataset.json`），
 按城市的分组规模刻意设计为 5 / 4 / 2 / 1，便于验证阈值 3 的抑制边界；

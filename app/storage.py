@@ -34,8 +34,40 @@ class Ledger:
     def _load(self) -> dict[str, Any]:
         if self._path.exists():
             with self._path.open("r", encoding="utf-8") as fh:
-                return json.load(fh)
-        return {"principals": {}, "queries": {}}
+                state = json.load(fh)
+        else:
+            state = {}
+        return self._migrate(state)
+
+    @staticmethod
+    def _migrate(state: dict[str, Any]) -> dict[str, Any]:
+        """把旧版账本结构就地升级为当前结构（幂等，可反复执行）。
+
+        旧版差异：
+        - 缺少 pools / adjustments / history 三个分区；
+        - queries 为扁平的 ``{query_id: record}``，现按
+          ``{principal: {query_id: record}}`` 隔离（record 自带 principal 字段，
+          可无损归位）；旧记录没有 created_at，补 None。
+        """
+        state.setdefault("principals", {})
+        state.setdefault("pools", {})
+        state.setdefault("adjustments", {})
+        state.setdefault("history", [])
+        queries = state.get("queries", {})
+        nested: dict[str, Any] = {}
+        for key, record in queries.items():
+            if isinstance(record, dict) and "cache_key" in record:
+                # 旧版扁平记录：按记录内的 principal 归位
+                record.setdefault("created_at", None)
+                # 旧版 cache_key 没有 pool_id 分量，补 None（个人额度）
+                if len(record["cache_key"]) == 5:
+                    record["cache_key"] = [*record["cache_key"], None]
+                nested.setdefault(record["principal"], {})[key] = record
+            else:
+                # 已是按主体分组的嵌套结构
+                nested[key] = record
+        state["queries"] = nested
+        return state
 
     def _persist(self) -> None:
         tmp = self._path.with_suffix(".json.tmp")
@@ -82,9 +114,9 @@ class Ledger:
             entry["authorized"] = True
 
     # ---------- 查询 ----------
-    def get_query(self, query_id: str) -> dict[str, Any] | None:
+    def get_query(self, principal: str, query_id: str) -> dict[str, Any] | None:
         with self.transaction() as state:
-            record = state["queries"].get(query_id)
+            record = state["queries"].get(principal, {}).get(query_id)
             return None if record is None else json.loads(json.dumps(record))
 
     def get_budget(self, principal: str) -> dict[str, Any]:
@@ -98,6 +130,19 @@ class Ledger:
                 "budget_epsilon": float(entry["budget_epsilon"]),
             }
 
+    # ---------- 预算池 ----------
+    def get_pool(self, pool_id: str) -> dict[str, Any] | None:
+        with self.transaction() as state:
+            pool = state["pools"].get(pool_id)
+            return None if pool is None else json.loads(json.dumps(pool))
+
+    # ---------- 历史 ----------
+    def get_history(self, principal: str) -> list[dict[str, Any]]:
+        with self.transaction() as state:
+            return json.loads(
+                json.dumps([e for e in state["history"] if e["principal"] == principal])
+            )
+
     def run_transaction(self, fn: Callable[[dict[str, Any]], Any]) -> Any:
         """供 service 层使用：在锁内执行包含业务计算的事务。"""
         with self.transaction() as state:
@@ -107,3 +152,6 @@ class Ledger:
         with self.transaction() as state:
             state["principals"] = {}
             state["queries"] = {}
+            state["pools"] = {}
+            state["adjustments"] = {}
+            state["history"] = []

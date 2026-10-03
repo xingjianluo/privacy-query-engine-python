@@ -40,9 +40,10 @@ def test_concurrent_same_query_id_charges_once(settings: Settings):
     flags = sorted(r.replayed for r in responses)
     assert flags == [False] + [True] * 15
     assert ledger.get_budget("alice")["spent_epsilon"] == 1.0
-    # 只落盘一条查询记录
+    # 只落盘一条查询记录（按主体隔离存储）
     with ledger.transaction() as state:
-        assert list(state["queries"].keys()) == ["same"]
+        assert list(state["queries"].keys()) == ["alice"]
+        assert list(state["queries"]["alice"].keys()) == ["same"]
 
 
 def test_concurrent_distinct_queries_never_overspend(settings: Settings):
@@ -70,7 +71,7 @@ def test_concurrent_distinct_queries_never_overspend(settings: Settings):
     assert outcomes.count("BudgetExhaustedError") == 9
     assert ledger.get_budget("bob")["spent_epsilon"] == 3.0
     with ledger.transaction() as state:
-        assert len(state["queries"]) == 3
+        assert len(state["queries"]["bob"]) == 3
 
 
 def test_persistence_failure_leaves_no_half_state(settings: Settings, monkeypatch):
@@ -103,4 +104,4 @@ def test_persistence_failure_leaves_no_half_state(settings: Settings, monkeypatc
     fresh = Ledger(settings.ledger_path, settings.lock_path)
     assert fresh.get_budget("alice")["spent_epsilon"] == 0.0
     with fresh.transaction() as state:
-        assert "pf-1" not in state["queries"]
+        assert "pf-1" not in state["queries"].get("alice", {})

@@ -54,7 +54,7 @@ def test_noise_is_deterministic_and_private(settings: Settings):
     ledger.grant("alice", 100.0)
     ds = load_dataset(settings.dataset_path)
     r1 = submit_query(_count_query(qid="det"), ledger, ds, settings)
-    record = ledger.get_query("det")
+    record = ledger.get_query("alice", "det")
     ledger2 = Ledger(settings.ledger_path, settings.lock_path)
     r2 = submit_query(_count_query(qid="det"), ledger2, ds, settings)
     assert [g.value for g in r1.results] == [g.value for g in r2.results]

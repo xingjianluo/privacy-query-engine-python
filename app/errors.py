@@ -47,6 +47,46 @@ class QueryConflictError(ServiceError):
     http_status = 409
 
 
+class PoolBudgetExhaustedError(ServiceError):
+    """共享预算池剩余额度不足以支付本次查询（与个人预算不足可区分）。"""
+
+    code = "pool_budget_exhausted"
+    http_status = 429
+
+    def __init__(self, message: str = "", remaining: float = 0.0, required: float = 0.0) -> None:
+        super().__init__(message)
+        self.remaining = remaining
+        self.required = required
+
+
+class PoolAccessDeniedError(ServiceError):
+    """主体不在所请求预算池的成员名单内。"""
+
+    code = "pool_access_denied"
+    http_status = 403
+
+
+class UnknownPoolError(ServiceError):
+    """引用了不存在的预算池。"""
+
+    code = "unknown_pool"
+    http_status = 404
+
+
+class AdjustmentRejectedError(ServiceError):
+    """预算调整被整体拒绝（如回收后余额将低于已消耗、目标不存在）。"""
+
+    code = "adjustment_rejected"
+    http_status = 422
+
+
+class AdjustmentConflictError(ServiceError):
+    """同一调整单号以不同参数重复提交。"""
+
+    code = "adjustment_conflict"
+    http_status = 409
+
+
 class PersistenceError(ServiceError):
     """持久化层失败（对客户端仅暴露通用内部错误信息）。"""
 

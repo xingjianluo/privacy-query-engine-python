@@ -17,12 +17,17 @@ from app.errors import (
     ServiceError,
 )
 from app.models import (
+    AdjustRequest,
+    AdjustResponse,
     BudgetResponse,
     GrantRequest,
+    HistoryResponse,
+    PoolResponse,
+    PoolUpsertRequest,
     QueryRequest,
     QueryResponse,
 )
-from app.service import submit_query
+from app.service import adjust_budget, get_history, get_pool, submit_query, upsert_pool
 from app.storage import Ledger
 
 logger = logging.getLogger("pqe.api")
@@ -97,5 +102,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/query", response_model=QueryResponse)
     async def query(body: QueryRequest) -> QueryResponse:
         return submit_query(body, ledger, dataset, settings)
+
+    # ---------- 共享预算池 ----------
+
+    @app.post("/admin/pool", response_model=PoolResponse, status_code=201)
+    def create_pool(body: PoolUpsertRequest) -> PoolResponse:
+        return upsert_pool(body, ledger)
+
+    @app.get("/pool/{pool_id}", response_model=PoolResponse)
+    def pool(pool_id: str) -> PoolResponse:
+        return get_pool(pool_id, ledger)
+
+    # ---------- 预算调整（追加/回收） ----------
+
+    @app.post("/admin/adjust", response_model=AdjustResponse, status_code=200)
+    def adjust(body: AdjustRequest) -> AdjustResponse:
+        return adjust_budget(body, ledger)
+
+    # ---------- 查询历史（仅本人可见） ----------
+
+    @app.get("/history/{principal}", response_model=HistoryResponse)
+    def history(
+        principal: str,
+        viewer: str,
+        aggregation: str | None = None,
+        dimension: str | None = None,
+        status: str | None = None,
+        start: float | None = None,
+        end: float | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> HistoryResponse:
+        return get_history(
+            viewer,
+            principal,
+            ledger,
+            aggregation=aggregation,
+            dimension=dimension,
+            status=status,
+            start=start,
+            end=end,
+            page=page,
+            page_size=page_size,
+        )
 
     return app
