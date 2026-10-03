@@ -14,15 +14,24 @@ from app.config import Settings, get_settings
 from app.dataset import load_dataset
 from app.errors import (
     BudgetExhaustedError,
+    InvalidQueryError,
+    PoolBudgetExhaustedError,
+    PoolNotFoundError,
     ServiceError,
 )
 from app.models import (
+    AdjustmentRequest,
+    AdjustmentResponse,
     BudgetResponse,
     GrantRequest,
+    HistoryResponse,
+    PoolCreateRequest,
+    PoolMembersRequest,
+    PoolResponse,
     QueryRequest,
     QueryResponse,
 )
-from app.service import submit_query
+from app.service import adjust_budget, query_history, submit_query
 from app.storage import Ledger
 
 logger = logging.getLogger("pqe.api")
@@ -43,7 +52,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(ServiceError)
     async def _on_service_error(_: Request, exc: ServiceError) -> JSONResponse:
-        if exc.code == BudgetExhaustedError.code:
+        if exc.code in (BudgetExhaustedError.code, PoolBudgetExhaustedError.code):
             logger.info("request rejected: %s (%s)", exc.code, exc.message)
         else:
             logger.warning("request rejected: %s (%s)", exc.code, exc.message)
@@ -97,5 +106,69 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/query", response_model=QueryResponse)
     async def query(body: QueryRequest) -> QueryResponse:
         return submit_query(body, ledger, dataset, settings)
+
+    # ---------- 共享预算池 ----------
+    @app.post("/admin/pools", response_model=PoolResponse, status_code=201)
+    def create_pool(body: PoolCreateRequest) -> PoolResponse:
+        ledger.create_pool(body.pool_id, body.budget_epsilon, body.members)
+        pool = ledger.get_pool(body.pool_id)
+        return PoolResponse(
+            pool_id=body.pool_id,
+            budget_epsilon=pool["budget_epsilon"],
+            spent_epsilon=pool["spent_epsilon"],
+            remaining_epsilon=pool["budget_epsilon"] - pool["spent_epsilon"],
+            members=pool["members"],
+        )
+
+    @app.get("/pools/{pool_id}", response_model=PoolResponse)
+    def get_pool(pool_id: str) -> PoolResponse:
+        pool = ledger.get_pool(pool_id)
+        if pool is None:
+            raise PoolNotFoundError(f"pool '{pool_id}' does not exist")
+        return PoolResponse(
+            pool_id=pool_id,
+            budget_epsilon=pool["budget_epsilon"],
+            spent_epsilon=pool["spent_epsilon"],
+            remaining_epsilon=pool["budget_epsilon"] - pool["spent_epsilon"],
+            members=pool["members"],
+        )
+
+    @app.put("/admin/pools/{pool_id}/members", response_model=PoolResponse)
+    def set_pool_members(pool_id: str, body: PoolMembersRequest) -> PoolResponse:
+        ledger.set_pool_members(pool_id, body.members)
+        return get_pool(pool_id)
+
+    # ---------- 预算调整（追加/回收） ----------
+    @app.post("/admin/adjustments", response_model=AdjustmentResponse, status_code=201)
+    def adjust(body: AdjustmentRequest) -> AdjustmentResponse:
+        return adjust_budget(body, ledger)
+
+    # ---------- 提交历史 ----------
+    @app.get("/history/{principal}", response_model=HistoryResponse)
+    def history(
+        principal: str,
+        requester: str,
+        aggregation: str | None = None,
+        dimension: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+        status: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> HistoryResponse:
+        if page < 1 or not (1 <= page_size <= 100):
+            raise InvalidQueryError("page must be >= 1 and page_size within [1, 100]")
+        return query_history(
+            ledger,
+            principal,
+            requester,
+            aggregation=aggregation,
+            dimension=dimension,
+            start=start,
+            end=end,
+            status=status,
+            page=page,
+            page_size=page_size,
+        )
 
     return app

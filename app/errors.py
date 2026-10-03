@@ -47,6 +47,53 @@ class QueryConflictError(ServiceError):
     http_status = 409
 
 
+class PoolNotFoundError(ServiceError):
+    """引用的共享预算池不存在。"""
+
+    code = "pool_not_found"
+    http_status = 404
+
+
+class PoolConflictError(ServiceError):
+    """预算池已存在，重复创建被拒绝。"""
+
+    code = "pool_conflict"
+    http_status = 409
+
+
+class PoolBudgetExhaustedError(ServiceError):
+    """共享预算池剩余额度不足（与个人预算不足可区分）。"""
+
+    code = "pool_budget_exhausted"
+    http_status = 429
+
+    def __init__(self, message: str = "", remaining: float = 0.0, required: float = 0.0) -> None:
+        super().__init__(message)
+        self.remaining = remaining
+        self.required = required
+
+
+class AdjustmentConflictError(ServiceError):
+    """adjustment_id 已存在但调整参数与首次提交不一致。"""
+
+    code = "adjustment_conflict"
+    http_status = 409
+
+
+class AdjustmentRejectedError(ServiceError):
+    """回收后已消耗额度将超过新额度，整笔调整被拒绝且账本不变。"""
+
+    code = "adjustment_rejected"
+    http_status = 409
+
+
+class AdjustmentTargetNotFoundError(ServiceError):
+    """调整目标（主体或预算池）不存在。"""
+
+    code = "adjustment_target_not_found"
+    http_status = 404
+
+
 class PersistenceError(ServiceError):
     """持久化层失败（对客户端仅暴露通用内部错误信息）。"""
 

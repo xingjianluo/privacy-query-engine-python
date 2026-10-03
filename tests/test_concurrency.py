@@ -6,7 +6,7 @@ from app.config import Settings
 from app.dataset import load_dataset
 from app.models import QueryRequest
 from app.service import submit_query
-from app.storage import Ledger
+from app.storage import Ledger, query_key
 
 
 def _fire_concurrent(fn, n: int):
@@ -40,9 +40,9 @@ def test_concurrent_same_query_id_charges_once(settings: Settings):
     flags = sorted(r.replayed for r in responses)
     assert flags == [False] + [True] * 15
     assert ledger.get_budget("alice")["spent_epsilon"] == 1.0
-    # 只落盘一条查询记录
+    # 只落盘一条查询记录（按主体命名空间隔离的键）
     with ledger.transaction() as state:
-        assert list(state["queries"].keys()) == ["same"]
+        assert list(state["queries"].keys()) == [query_key("alice", "same")]
 
 
 def test_concurrent_distinct_queries_never_overspend(settings: Settings):
