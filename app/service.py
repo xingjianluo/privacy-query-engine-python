@@ -226,7 +226,9 @@ def _submit(req: QueryRequest, ledger: Ledger, ds: Dataset, settings: Settings) 
         my_queries = state["queries"].setdefault(req.principal, {})
         existing = my_queries.get(req.query_id)
         if existing is not None:
-            if existing["cache_key"] != key:
+            # 账本从 JSON 读回的 cache_key 是 list，内存里可能是 tuple：
+            # 统一按 tuple 比较，避免旧记录重放被误判为参数冲突
+            if tuple(existing["cache_key"]) != tuple(key):
                 raise QueryConflictError(
                     f"query_id '{req.query_id}' was submitted with different parameters"
                 )
@@ -515,7 +517,8 @@ def get_history(
         if status is not None and e["status"] != status:
             return False
         ts = e.get("created_at")
-        # 旧版迁移记录没有 created_at：仅在未指定时间范围时纳入
+        # 旧版迁移补录的老记录没有提交时间：仅在未指定时间范围时纳入，
+        # 绝不把它们塞进任何用户指定的时间段
         if ts is None:
             return start is None and end is None
         if start is not None and ts < start:
@@ -523,7 +526,8 @@ def get_history(
         return not (end is not None and ts > end)
 
     matched = [e for e in events if match(e)]
-    matched.sort(key=lambda e: (e.get("created_at") or 0.0))
+    # 老记录（无时间）排在最前，其余按提交时间升序
+    matched.sort(key=lambda e: (e.get("created_at") is not None, e.get("created_at") or 0.0))
     total = len(matched)
     offset = (page - 1) * page_size
     items = [
@@ -534,7 +538,8 @@ def get_history(
             status=e["status"],
             epsilon=float(e["epsilon"]),
             error=e.get("error"),
-            created_at=float(e.get("created_at") or 0.0),
+            created_at=e.get("created_at"),
+            legacy=bool(e.get("legacy")),
             results=(
                 [GroupResult(**r) for r in e["results"]]
                 if e.get("results") is not None

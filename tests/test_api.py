@@ -1,4 +1,10 @@
-"""HTTP 层集成：路由、状态码、内部错误脱敏。"""
+"""HTTP 层集成：路由、状态码、内部错误脱敏。
+
+覆盖业务：
+1. grant/budget/query/history 等路由的 HTTP 全链路行为；
+2. 非法 JSON 统一脱敏为 invalid_query，不回显异常原文；
+3. 非领域异常脱敏为 internal_error，仅返回追踪 ref。
+"""
 from fastapi.testclient import TestClient
 
 

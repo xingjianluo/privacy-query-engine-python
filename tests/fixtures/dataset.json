@@ -1,0 +1,86 @@
+[
+  {
+    "id": 1,
+    "city": "Beijing",
+    "department": "eng",
+    "age": 29,
+    "salary": 21000
+  },
+  {
+    "id": 2,
+    "city": "Beijing",
+    "department": "eng",
+    "age": 34,
+    "salary": 24000
+  },
+  {
+    "id": 3,
+    "city": "Beijing",
+    "department": "sales",
+    "age": 41,
+    "salary": 18000
+  },
+  {
+    "id": 4,
+    "city": "Beijing",
+    "department": "sales",
+    "age": 38,
+    "salary": 17500
+  },
+  {
+    "id": 5,
+    "city": "Beijing",
+    "department": "hr",
+    "age": 31,
+    "salary": 15000
+  },
+  {
+    "id": 6,
+    "city": "Shanghai",
+    "department": "eng",
+    "age": 27,
+    "salary": 22000
+  },
+  {
+    "id": 7,
+    "city": "Shanghai",
+    "department": "hr",
+    "age": 45,
+    "salary": 16000
+  },
+  {
+    "id": 8,
+    "city": "Shenzhen",
+    "department": "eng",
+    "age": 30,
+    "salary": 26000
+  },
+  {
+    "id": 9,
+    "city": "Guangzhou",
+    "department": "sales",
+    "age": 36,
+    "salary": 17000
+  },
+  {
+    "id": 10,
+    "city": "Guangzhou",
+    "department": "sales",
+    "age": 33,
+    "salary": 16500
+  },
+  {
+    "id": 11,
+    "city": "Guangzhou",
+    "department": "eng",
+    "age": 28,
+    "salary": 23000
+  },
+  {
+    "id": 12,
+    "city": "Guangzhou",
+    "department": "eng",
+    "age": 50,
+    "salary": 31000
+  }
+]

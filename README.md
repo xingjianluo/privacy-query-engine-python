@@ -176,6 +176,20 @@ uv run pytest                           # 运行全部测试（含预算判定�
   响应含 `total` 与当前页 `items`；
 - 成功、重放与被拒（含参数非法、未授权、预算不足）的提交都会入历史；
 - 历史条目只携带**加噪结果与抑制原因**，绝不包含原始精确值。
+- **旧账本升级补录的老记录**：升级前版本没有历史分区，这些成功查询在迁移时
+  补录进提交者本人历史，条目带 `"legacy": true` 且 `"created_at": null`
+  （老数据没有提交时间，不做任何时间猜测）。呈现与筛选规则：
+  - **不加时间范围**（不带 `start`/`end`）：老记录纳入本人历史，按用户归位、
+    不会串到别人，排序时排在有时间的新记录之前，分页同样可见；
+  - **指定任意时间范围**（只给 `start`、只给 `end` 或两者都给）：老记录一律
+    排除——它们没有真实提交时间，不会被塞进任何时间段；该规则不影响有时间的
+    新记录原本的时间筛选行为；
+  - 老记录在历史中状态为 `completed`，因此按 `status=completed/replayed` 等
+    非时间条件筛选时仍可命中；按 `status=rejected` 筛选不会命中；
+  - 迁移补录幂等：反复加载/重启同一条老记录只补一次；补录只读取老查询记录里
+    已持久化的加噪响应，不改动预算与查询账实，老查询仍可原样重放
+    （结果不变、不重复扣费）。用户升级后主动重放老查询，会按常规产生一条新的
+    `replayed` 历史事件，与补录的 `legacy` 条目并存、互不影响。
 
 可区分的错误码（`{"error": code, "message": ...}`）：
 
@@ -214,12 +228,16 @@ uv run pytest                           # 运行全部测试（含预算判定�
 - **老接口**：`/admin/grant`、`/budget/{principal}`、`/query`、`/health`
   的请求/响应字段保持不变；`/query` 不带 `pool_id` 时行为与旧版完全一致
   （从个人额度扣费），响应新增字段（`budget_source`、`pool_id`）为纯增量。
-- **老数据**：旧版 `ledger.json` 加载时自动就地迁移（幂等）：
+- **老数据**：旧版 `ledger.json` 加载时自动就地迁移（幂等，可反复执行）：
   - 扁平的 `queries` 记录按记录内的 `principal` 归位到按用户隔离的结构，
-    旧记录仍可正常重放、不会重复扣费；
+    旧记录仍可正常重放、不会重复扣费（JSON 读回的 list 型 `cache_key`
+    在迁移时归一化为 tuple 比较，老查询重放不会被误判 409 参数冲突）；
   - 旧版 5 分量 `cache_key` 自动补上 `pool_id=None` 分量；
   - 补齐 `pools` / `adjustments` / `history` 三个新分区；
-  - 旧记录没有 `created_at`，在历史查询中仅当未指定时间范围时纳入。
+  - **旧版成功查询自动补录进本人历史**（`legacy=true`、`created_at=null`）：
+    不带时间范围可见、带时间范围排除，按提交用户归位，详见上文「查询历史」；
+    反复加载/重启不重复补录，不影响老查询的重放与扣费，补录内容只有加噪结果
+    与抑制原因。
 
 ## 7. 验证方法
 
@@ -248,7 +266,43 @@ uv run pytest -v
 - `tests/test_multiuser.py`：不同用户同名 `query_id` 互不串结果与扣费、
   旧版扁平账本自动迁移后旧记录可重放、新查询按用户隔离；
 - `tests/test_history.py`：按聚合/维度/状态/时间范围筛选、分页、
-  越权查看他人历史被拒、历史条目不携带精确值、被拒查询也入历史。
+  越权查看他人历史被拒、历史条目不携带精确值、被拒查询也入历史；
+- `tests/test_legacy_history.py`：**旧账本升级兼容**（用升级前真实版本代码
+  生成的 `tests/fixtures/ledger.json` 造数）：不加时间范围老记录可见且按用户
+  归位、带任意时间范围老记录被排除、与新记录混合时筛选行为不变、反复
+  加载/重启不重复补录且预算账实不变、老查询原样重放不二次扣费、新用户用
+  相同编号不受影响、补录条目不含原始精确值。
+- 跑测试时日志分两类前缀：`[TEST-COVERAGE]` 在会话开始时按模块列出覆盖的
+  业务要点，`[TEST-RESULT]` 逐条打印每个用例的 PASS/FAIL/ERROR 与耗时。
+
+### 本地验证旧账本升级后的历史兼容
+
+测试夹具 `tests/fixtures/ledger.json` 由升级前版本（git 历史中 pools/history
+特性之前的提交）的真实服务代码生成，是一份扁平 `queries`、无 `history`
+分区、记录无 `created_at` 的旧账本。复现与验证步骤：
+
+```bash
+# 1) 直接运行兼容用例（会把真实旧账本复制到临时目录后启动新版）
+uv run pytest tests/test_legacy_history.py -v
+
+# 2) 手工端到端：拿这份旧账本启动新版服务
+mkdir -p /tmp/pqe-demo
+cp tests/fixtures/ledger.json tests/fixtures/dataset.json /tmp/pqe-demo/
+PQE_DATA_DIR=/tmp/pqe-demo uv run uvicorn main:app --port 8000
+
+# 3) 另开终端验证
+# 不加时间范围：alice 的 2 条老记录可见（legacy=true, created_at=null）
+curl 'localhost:8000/history/alice?viewer=alice'
+# 加任意时间范围：老记录被排除，total=0
+curl 'localhost:8000/history/alice?viewer=alice&start=0'
+# 老查询原样重放：replayed=true、结果不变、已耗预算不增加
+curl -X POST localhost:8000/query -H 'content-type: application/json' \
+  -d '{"query_id":"legacy-count-1","principal":"alice","aggregation":"count",
+       "dimension":"city","epsilon":1.0,
+       "groups":["Beijing","Shanghai","Shenzhen","Nowhere"]}'
+curl localhost:8000/budget/alice      # spent_epsilon 仍为 2.0
+# 重启服务后再查历史：老记录仍只有一份，不重复补录
+```
 
 ### 手动验证新能力
 

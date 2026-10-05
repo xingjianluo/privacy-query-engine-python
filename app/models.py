@@ -141,7 +141,11 @@ class HistoryItem(BaseModel):
     status: str  # completed / replayed / rejected
     epsilon: float
     error: str | None = None
-    created_at: float
+    # 旧版账本迁移补录的老记录没有提交时间，显式为 null；
+    # 这类条目仅在不指定时间范围时被历史查询纳入
+    created_at: float | None = None
+    # legacy=True 表示该条目来自旧账本迁移补录（无提交时间）
+    legacy: bool = False
     # 仅 completed/replayed 携带；内容只有加噪结果与抑制原因，绝不含精确值
     results: list[GroupResult] | None = None
     suppressed: list[SuppressedGroup] | None = None

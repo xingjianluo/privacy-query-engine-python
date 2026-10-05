@@ -1,0 +1,154 @@
+{
+  "principals": {
+    "alice": {
+      "authorized": true,
+      "spent_epsilon": 2.0,
+      "budget_epsilon": 10.0
+    },
+    "carol": {
+      "authorized": true,
+      "spent_epsilon": 1.0,
+      "budget_epsilon": 5.0
+    }
+  },
+  "queries": {
+    "legacy-count-1": {
+      "status": "completed",
+      "principal": "alice",
+      "cache_key": [
+        "count",
+        "city",
+        null,
+        1.0,
+        [
+          "Beijing",
+          "Nowhere",
+          "Shanghai",
+          "Shenzhen"
+        ]
+      ],
+      "epsilon_charged": 1.0,
+      "remaining_budget": 9.0,
+      "response": {
+        "query_id": "legacy-count-1",
+        "principal": "alice",
+        "aggregation": "count",
+        "dimension": "city",
+        "replayed": false,
+        "epsilon_charged": 1.0,
+        "remaining_budget": 9.0,
+        "results": [
+          {
+            "group": "Beijing",
+            "value": 5.0,
+            "noisy_count": 5
+          }
+        ],
+        "suppressed": [
+          {
+            "group": "Nowhere",
+            "reason": "empty_group",
+            "detail": "dimension value has no rows in the dataset"
+          },
+          {
+            "group": "Shanghai",
+            "reason": "small_group",
+            "detail": "group size below threshold 3"
+          },
+          {
+            "group": "Shenzhen",
+            "reason": "small_group",
+            "detail": "group size below threshold 3"
+          }
+        ]
+      }
+    },
+    "legacy-sum-1": {
+      "status": "completed",
+      "principal": "alice",
+      "cache_key": [
+        "sum",
+        "department",
+        "salary",
+        1.0,
+        null
+      ],
+      "epsilon_charged": 1.0,
+      "remaining_budget": 8.0,
+      "response": {
+        "query_id": "legacy-sum-1",
+        "principal": "alice",
+        "aggregation": "sum",
+        "dimension": "department",
+        "replayed": false,
+        "epsilon_charged": 1.0,
+        "remaining_budget": 8.0,
+        "results": [
+          {
+            "group": "eng",
+            "value": 150063.68,
+            "noisy_count": null
+          },
+          {
+            "group": "sales",
+            "value": 67513.02,
+            "noisy_count": null
+          }
+        ],
+        "suppressed": [
+          {
+            "group": "hr",
+            "reason": "small_group",
+            "detail": "group size below threshold 3"
+          }
+        ]
+      }
+    },
+    "legacy-carol-1": {
+      "status": "completed",
+      "principal": "carol",
+      "cache_key": [
+        "count",
+        "city",
+        null,
+        1.0,
+        null
+      ],
+      "epsilon_charged": 1.0,
+      "remaining_budget": 4.0,
+      "response": {
+        "query_id": "legacy-carol-1",
+        "principal": "carol",
+        "aggregation": "count",
+        "dimension": "city",
+        "replayed": false,
+        "epsilon_charged": 1.0,
+        "remaining_budget": 4.0,
+        "results": [
+          {
+            "group": "Beijing",
+            "value": 4.0,
+            "noisy_count": 4
+          },
+          {
+            "group": "Guangzhou",
+            "value": 4.0,
+            "noisy_count": 4
+          }
+        ],
+        "suppressed": [
+          {
+            "group": "Shanghai",
+            "reason": "small_group",
+            "detail": "group size below threshold 3"
+          },
+          {
+            "group": "Shenzhen",
+            "reason": "small_group",
+            "detail": "group size below threshold 3"
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,4 +1,11 @@
-"""重复提交幂等性与跨重启预算/结果持久化。"""
+"""重复提交幂等性与跨重启预算/结果持久化。
+
+覆盖业务：
+1. 相同 query_id 重试返回逐字段一致的缓存载荷且只扣一次预算；
+2. 相同编号不同参数返回 query_conflict，防止顶替查询；
+3. 预算耗尽后已完成查询仍可重放；
+4. 新建存储/应用实例模拟重启后预算与查询结果均保留。
+"""
 from app.api import create_app
 from app.config import Settings
 from app.dataset import load_dataset

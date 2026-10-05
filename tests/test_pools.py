@@ -1,4 +1,12 @@
-"""共享预算池：成员控制、池额度不足的独立错误码、并发不超支。"""
+"""共享预算池：成员控制、池额度不足的独立错误码、并发不超支。
+
+覆盖业务：
+1. 池成员访问控制：非成员 pool_access_denied、未知池 unknown_pool；
+2. 池额度不足返回与个人不足可区分的 pool_budget_exhausted；
+3. 已存在池重复创建只替换成员名单，额度须经 /admin/adjust 变更；
+4. 池查询重放不重复扣费，多成员并发共用一池绝不超支、账实相符；
+5. 不带 pool_id 的老用法仍走个人额度，行为不变。
+"""
 import concurrent.futures
 import threading
 

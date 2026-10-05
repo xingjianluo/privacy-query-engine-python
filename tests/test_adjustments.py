@@ -1,4 +1,11 @@
-"""预算调整：追加/回收、调整单号幂等、回收负余额整笔回滚、跨重启持久化。"""
+"""预算调整：追加/回收、调整单号幂等、回收负余额整笔回滚、跨重启持久化。
+
+覆盖业务：
+1. 追加/回收个人额度与池额度，调整前后额度与已耗写日志；
+2. 同一 adjustment_id 重复提交只生效一次且返回一致（replayed）；
+3. 同单号不同参数 adjustment_conflict；回收致负余额时整笔回滚且单号可复用；
+4. 调整记录跨重启保留，重放仍命中幂等。
+"""
 from fastapi.testclient import TestClient
 
 from app.api import create_app

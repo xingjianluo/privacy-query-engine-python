@@ -1,4 +1,11 @@
-"""加噪确定性与抑制边界：空分组、小分组必须给明确原因且不泄漏精确值。"""
+"""加噪确定性与抑制边界：空分组、小分组必须给明确原因且不泄漏精确值。
+
+覆盖业务：
+1. empty_group/small_group 抑制原因与阈值边界（2 抑制、3+ 放行）；
+2. 噪声由 query_id 确定性派生：同编号结果可复现、不同编号统计独立；
+3. sum/avg 只输出带噪值，不泄漏精确聚合值，sum 不无偿附带计数；
+4. avg 带噪分母过小时以 unstable_average 抑制。
+"""
 from app.config import Settings
 from app.dataset import load_dataset
 from app.models import QueryRequest
