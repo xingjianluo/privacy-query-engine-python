@@ -1,0 +1,200 @@
+{
+  "principals": {
+    "alice": {
+      "authorized": true,
+      "budget_epsilon": 10.0,
+      "spent_epsilon": 3.5
+    },
+    "carol": {
+      "authorized": true,
+      "budget_epsilon": 5.0,
+      "spent_epsilon": 1.0
+    }
+  },
+  "queries": {
+    "legacy-count-all": {
+      "cache_key": [
+        "count",
+        "city",
+        null,
+        1.0,
+        null
+      ],
+      "epsilon_charged": 1.0,
+      "principal": "alice",
+      "remaining_budget": 9.0,
+      "response": {
+        "aggregation": "count",
+        "dimension": "city",
+        "epsilon_charged": 1.0,
+        "principal": "alice",
+        "query_id": "legacy-count-all",
+        "remaining_budget": 9.0,
+        "replayed": false,
+        "results": [
+          {
+            "group": "Beijing",
+            "noisy_count": 5,
+            "value": 5.0
+          },
+          {
+            "group": "Guangzhou",
+            "noisy_count": 9,
+            "value": 9.0
+          }
+        ],
+        "suppressed": [
+          {
+            "detail": "group size below threshold 3",
+            "group": "Shanghai",
+            "reason": "small_group"
+          },
+          {
+            "detail": "group size below threshold 3",
+            "group": "Shenzhen",
+            "reason": "small_group"
+          }
+        ]
+      },
+      "status": "completed"
+    },
+    "legacy-count-suppressed": {
+      "cache_key": [
+        "count",
+        "city",
+        null,
+        1.0,
+        [
+          "Beijing",
+          "Nowhere",
+          "Shanghai",
+          "Shenzhen"
+        ]
+      ],
+      "epsilon_charged": 1.0,
+      "principal": "alice",
+      "remaining_budget": 8.0,
+      "response": {
+        "aggregation": "count",
+        "dimension": "city",
+        "epsilon_charged": 1.0,
+        "principal": "alice",
+        "query_id": "legacy-count-suppressed",
+        "remaining_budget": 8.0,
+        "replayed": false,
+        "results": [
+          {
+            "group": "Beijing",
+            "noisy_count": 6,
+            "value": 6.0
+          }
+        ],
+        "suppressed": [
+          {
+            "detail": "dimension value has no rows in the dataset",
+            "group": "Nowhere",
+            "reason": "empty_group"
+          },
+          {
+            "detail": "group size below threshold 3",
+            "group": "Shanghai",
+            "reason": "small_group"
+          },
+          {
+            "detail": "group size below threshold 3",
+            "group": "Shenzhen",
+            "reason": "small_group"
+          }
+        ]
+      },
+      "status": "completed"
+    },
+    "legacy-sum-age": {
+      "cache_key": [
+        "sum",
+        "department",
+        "age",
+        1.5,
+        null
+      ],
+      "epsilon_charged": 1.5,
+      "principal": "alice",
+      "remaining_budget": 6.5,
+      "response": {
+        "aggregation": "sum",
+        "dimension": "department",
+        "epsilon_charged": 1.5,
+        "principal": "alice",
+        "query_id": "legacy-sum-age",
+        "remaining_budget": 6.5,
+        "replayed": false,
+        "results": [
+          {
+            "group": "eng",
+            "noisy_count": null,
+            "value": 178.95
+          },
+          {
+            "group": "sales",
+            "noisy_count": null,
+            "value": 149.33
+          }
+        ],
+        "suppressed": [
+          {
+            "detail": "group size below threshold 3",
+            "group": "hr",
+            "reason": "small_group"
+          }
+        ]
+      },
+      "status": "completed"
+    },
+    "q-001": {
+      "cache_key": [
+        "count",
+        "city",
+        null,
+        1.0,
+        null
+      ],
+      "epsilon_charged": 1.0,
+      "principal": "carol",
+      "remaining_budget": 4.0,
+      "response": {
+        "aggregation": "count",
+        "dimension": "city",
+        "epsilon_charged": 1.0,
+        "principal": "carol",
+        "query_id": "q-001",
+        "remaining_budget": 4.0,
+        "replayed": false,
+        "results": [
+          {
+            "group": "Beijing",
+            "noisy_count": 5,
+            "value": 5.0
+          },
+          {
+            "group": "Guangzhou",
+            "noisy_count": 5,
+            "value": 5.0
+          }
+        ],
+        "suppressed": [
+          {
+            "detail": "group size below threshold 3",
+            "group": "Shanghai",
+            "reason": "small_group"
+          },
+          {
+            "detail": "group size below threshold 3",
+            "group": "Shenzhen",
+            "reason": "small_group"
+          }
+        ]
+      },
+      "status": "completed"
+    }
+  }
+}

@@ -12,9 +12,10 @@ import json
 import logging
 import os
 import threading
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any
 
 from app.errors import PersistenceError, UnauthorizedError
 
@@ -47,7 +48,12 @@ class Ledger:
         - 缺少 pools / adjustments / history 三个分区；
         - queries 为扁平的 ``{query_id: record}``，现按
           ``{principal: {query_id: record}}`` 隔离（record 自带 principal 字段，
-          可无损归位）；旧记录没有 created_at，补 None。
+          可无损归位）；旧记录没有 created_at，补 None；
+        - 旧版没有查询历史分区，需要把旧版已成功执行的查询补录进 history，
+          使老用户在“查看自己的提交历史”时能看到这些记录。补录条目带
+          ``legacy=True`` 标记且 ``created_at=None``：仅在不指定时间范围时
+          纳入历史；补录依据历史里的 legacy 标记去重，反复加载/重启不会
+          重复补录。补录只读旧记录的加噪结果与抑制原因，绝不带出精确值。
         """
         state.setdefault("principals", {})
         state.setdefault("pools", {})
@@ -62,12 +68,74 @@ class Ledger:
                 # 旧版 cache_key 没有 pool_id 分量，补 None（个人额度）
                 if len(record["cache_key"]) == 5:
                     record["cache_key"] = [*record["cache_key"], None]
+                # 标记为旧版记录（新记录必有 float 型 created_at），
+                # 供历史补录在反复加载时识别范围
+                record["legacy"] = True
                 nested.setdefault(record["principal"], {})[key] = record
             else:
                 # 已是按主体分组的嵌套结构
                 nested[key] = record
         state["queries"] = nested
+        Ledger._backfill_legacy_history(state)
         return state
+
+    @staticmethod
+    def _backfill_legacy_history(state: dict[str, Any]) -> None:
+        """把旧版已成功的查询记录补录进历史分区（幂等）。
+
+        - 只补 status=completed 的查询记录（旧版拒绝不写 queries）；
+        - 按历史中已有的 ``legacy`` 标记去重：同 (principal, query_id)
+          的老记录无论加载/迁移多少次，都只补一条；
+        - 补录不改动 queries/principals，因此旧查询的重放与已扣预算不受影响；
+        - 补录条目只复制旧响应里的加噪结果（results）与抑制原因（suppressed）。
+        """
+        history: list[dict[str, Any]] = state["history"]
+        already = {
+            (e.get("principal"), e.get("query_id"))
+            for e in history
+            if isinstance(e, dict) and e.get("legacy")
+        }
+        added = 0
+        for principal, user_queries in state["queries"].items():
+            if not isinstance(user_queries, dict):
+                continue
+            for query_id, record in user_queries.items():
+                if not isinstance(record, dict):
+                    continue
+                if record.get("status") != "completed":
+                    continue
+                # 只补旧版记录：旧记录带 legacy 标记，且没有真实提交时间。
+                # 新版记录必有 float 型 created_at，绝不能在这里重复补录。
+                is_legacy = record.get("legacy") is True or record.get("created_at") is None
+                if not is_legacy:
+                    continue
+                if (principal, query_id) in already:
+                    continue
+                response = record.get("response") or {}
+                history.append(
+                    {
+                        "principal": principal,
+                        "query_id": query_id,
+                        "aggregation": response.get("aggregation"),
+                        "dimension": response.get("dimension"),
+                        "status": "completed",
+                        "epsilon": float(
+                            record.get("epsilon_charged", response.get("epsilon_charged", 0.0))
+                        ),
+                        "error": None,
+                        # 老记录本身没有提交时间：None 表示仅在不带时间范围时纳入
+                        "created_at": None,
+                        # 只有加噪结果与抑制原因，绝不带原始精确值
+                        "results": response.get("results"),
+                        "suppressed": response.get("suppressed"),
+                        # 迁移补录标记，用于幂等去重
+                        "legacy": True,
+                    }
+                )
+                already.add((principal, query_id))
+                added += 1
+        if added:
+            logger.info("ledger migration | backfilled_legacy_history=%d", added)
 
     def _persist(self) -> None:
         tmp = self._path.with_suffix(".json.tmp")
